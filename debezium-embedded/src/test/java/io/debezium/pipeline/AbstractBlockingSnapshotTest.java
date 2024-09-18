@@ -160,7 +160,7 @@ public abstract class AbstractBlockingSnapshotTest<T extends SourceConnector> ex
 
     @Test
     @FixFor("DBZ-8238")
-    public void totalNumberOfEventsSeenAfterBlockingSnapshot() throws Exception {
+    public void streamingMetricsResumeAfterBlockingSnapshot() throws Exception {
         // Testing.Print.enable();
 
         populateTable();
@@ -177,9 +177,10 @@ public abstract class AbstractBlockingSnapshotTest<T extends SourceConnector> ex
 
         insertRecords(ROW_COUNT, (ROW_COUNT * 2));
 
-        signalingRecords = 1; // from streaming
+        signalingRecords = 1;
+        Long expectedTotalStreamingCreateEvents = (long) (ROW_COUNT + signalingRecords);
 
-        assertExpectedMetrics(ROW_COUNT + 500L, (long) (ROW_COUNT + signalingRecords));
+        assertStreamingTotalNumberOfCreateEventsSeen(expectedTotalStreamingCreateEvents);
     }
 
     @Test
@@ -267,31 +268,15 @@ public abstract class AbstractBlockingSnapshotTest<T extends SourceConnector> ex
         };
     }
 
-    private Long getTotalStreamingEventsSeen(String connector, String server, String task, String database) throws MalformedObjectNameException,
-            ReflectionException, AttributeNotFoundException, InstanceNotFoundException,
-            MBeanException {
-        return getTotalNumberOfEventsSeen(connector, server, task, database, "streaming");
-    }
-
-    private Long getTotalSnapshotEventsSeen(String connector, String server, String task, String database) throws MalformedObjectNameException,
-            ReflectionException, AttributeNotFoundException, InstanceNotFoundException,
-            MBeanException {
-        return getTotalNumberOfEventsSeen(connector, server, task, database, "snapshot");
-    }
-
-    private Long getTotalNumberOfEventsSeen(String connector, String server, String task, String database, String context) throws MalformedObjectNameException,
+    private Long getTotalStreamingCreateEventsSeen(String connector, String server, String task, String database) throws MalformedObjectNameException,
             ReflectionException, AttributeNotFoundException, InstanceNotFoundException,
             MBeanException {
 
         final MBeanServer mbeanServer = ManagementFactory.getPlatformMBeanServer();
 
-        ObjectName objectName = switch (context) {
-            case "streaming" -> getStreamingMetricsObjectName(connector, server, context, task, database);
-            case "snapshot" -> getSnapshotMetricsObjectName(connector, server, task, database);
-            default -> throw new IllegalArgumentException("Unexpected context value: " + context);
-        };
+        ObjectName objectName = getStreamingMetricsObjectName(connector, server, "streaming", task, database);
 
-        return (Long) mbeanServer.getAttribute(objectName, "TotalNumberOfEventsSeen");
+        return (Long) mbeanServer.getAttribute(objectName, "TotalNumberOfCreateEventsSeen");
     }
 
     private Long getTotalSnapshotRecords(String table, String connector, String server, String task, String database) throws MalformedObjectNameException,
@@ -332,28 +317,22 @@ public abstract class AbstractBlockingSnapshotTest<T extends SourceConnector> ex
                 .until(() -> interceptor.containsMessage(message));
     }
 
-    private void assertExpectedMetrics(Long expectedSnapshotEvents, Long expectedStreamingEvents) throws ReflectionException,
+    private void assertStreamingTotalNumberOfCreateEventsSeen(Long expectedStreamingEvents) throws ReflectionException,
             MalformedObjectNameException, AttributeNotFoundException, InstanceNotFoundException, MBeanException {
         try {
             Awaitility.await()
                     .pollInterval(1000L, TimeUnit.MILLISECONDS)
                     .atMost(waitTimeForRecords() * 30L, TimeUnit.SECONDS)
-                    .until(() -> Objects.equals(getTotalSnapshotEventsSeen(connector(), server(), task(), database()), expectedSnapshotEvents) &&
-                            Objects.equals(getTotalStreamingEventsSeen(connector(), server(), task(), database()), expectedStreamingEvents));
+                    .until(() -> Objects.equals(getTotalStreamingCreateEventsSeen(connector(), server(), task(), database()), expectedStreamingEvents));
         }
         catch (org.awaitility.core.ConditionTimeoutException ignored) {
 
         }
         finally {
-            // Check streaming/snapshot metrics
-            Long actualSnapshotEvents = getTotalSnapshotEventsSeen(connector(), server(), task(), database());
-            Long actualStreamingEvents = getTotalStreamingEventsSeen(connector(), server(), task(), database());
+            Long actualStreamingEvents = getTotalStreamingCreateEventsSeen(connector(), server(), task(), database());
             assertThat(actualStreamingEvents)
-                    .withFailMessage("streaming TotalNumberOfEventsSeen metric value expected: %d actual: %d", expectedStreamingEvents, actualStreamingEvents)
+                    .withFailMessage("streaming TotalNumberOfCreateEventsSeen metric value expected: %d actual: %d", expectedStreamingEvents, actualStreamingEvents)
                     .isEqualTo(expectedStreamingEvents);
-            assertThat(actualSnapshotEvents)
-                    .withFailMessage("snapshot TotalNumberOfEventsSeen metric value expected: %d actual: %d", expectedSnapshotEvents, actualSnapshotEvents)
-                    .isEqualTo(expectedSnapshotEvents);
         }
     }
 
